@@ -32,6 +32,7 @@ impl BestCubePlan {
 /// - `member_errors` > `cube_members` - extra cube members may be required (e.g. CASE)
 /// - `member_errors` > `wrapper_nodes` - use SQL push down where possible if cube scan can't be detected
 /// - `non_pushed_down_window` > `wrapper_nodes` - prefer to always push down window functions
+/// - `non_pushed_down_sort` > `wrapper_nodes` - prefer to always push down sort expressions
 /// - match errors by priority - optimize for more specific errors
 #[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct CubePlanCost {
@@ -41,9 +42,10 @@ pub struct CubePlanCost {
     non_detected_cube_scans: i64,
     unwrapped_subqueries: usize,
     member_errors: i64,
+    ungrouped_aggregates: usize,
     // TODO if pre-aggregation can be used for window functions, then it'd be suboptimal
     non_pushed_down_window: i64,
-    ungrouped_aggregates: usize,
+    non_pushed_down_sort: i64,
     wrapper_nodes: i64,
     wrapped_select_ungrouped_scan: usize,
     ast_size_outside_wrapper: usize,
@@ -127,6 +129,7 @@ impl CubePlanCost {
             }) + other.non_detected_cube_scans,
             filter_members: self.filter_members + other.filter_members,
             non_pushed_down_window: self.non_pushed_down_window + other.non_pushed_down_window,
+            non_pushed_down_sort: self.non_pushed_down_sort + other.non_pushed_down_sort,
             member_errors: self.member_errors + other.member_errors,
             cube_members: self.cube_members + other.cube_members,
             errors: self.errors + other.errors,
@@ -165,6 +168,7 @@ impl CubePlanCost {
             filter_members: self.filter_members,
             member_errors: self.member_errors,
             non_pushed_down_window: self.non_pushed_down_window,
+            non_pushed_down_sort: self.non_pushed_down_sort,
             cube_members: self.cube_members,
             errors: self.errors,
             structure_points: self.structure_points,
@@ -250,6 +254,11 @@ impl CostFunction<LogicalPlanLanguage> for BestCubePlan {
 
         let non_pushed_down_window = match enode {
             LogicalPlanLanguage::Window(_) => 1,
+            _ => 0,
+        };
+
+        let non_pushed_down_sort = match enode {
+            LogicalPlanLanguage::Sort(_) => 1,
             _ => 0,
         };
 
@@ -395,6 +404,7 @@ impl CostFunction<LogicalPlanLanguage> for BestCubePlan {
                 non_detected_cube_scans,
                 member_errors,
                 non_pushed_down_window,
+                non_pushed_down_sort,
                 cube_members,
                 errors: this_errors,
                 time_dimensions_used_as_dimensions,

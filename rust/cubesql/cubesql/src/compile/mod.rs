@@ -4287,45 +4287,18 @@ limit
         )
         .await;
 
-        // let physical_plan = query_plan.as_physical_plan().await.unwrap();
-        // println!(
-        //     "Physical plan: {}",
-        //     displayable(physical_plan.as_ref()).indent()
-        // );
-
         let logical_plan = query_plan.as_logical_plan();
-        assert_eq!(
-            logical_plan.find_cube_scan().request,
-            V1LoadRequestQuery {
-                measures: Some(vec!["KibanaSampleDataEcommerce.sumPrice".to_string()]),
-                dimensions: Some(vec![]),
-                segments: Some(vec![]),
-                time_dimensions: Some(vec![
-                    V1LoadRequestQueryTimeDimension {
-                        dimension: "KibanaSampleDataEcommerce.order_date".to_string(),
-                        granularity: Some("year".to_string()),
-                        date_range: Some(json!(vec![
-                            "2023-07-08T00:00:00.000Z".to_string(),
-                            "2023-10-07T23:59:59.999Z".to_string()
-                        ])),
-                    },
-                    V1LoadRequestQueryTimeDimension {
-                        dimension: "KibanaSampleDataEcommerce.order_date".to_string(),
-                        granularity: Some("year".to_string()),
-                        date_range: None,
-                    },
-                    V1LoadRequestQueryTimeDimension {
-                        dimension: "KibanaSampleDataEcommerce.order_date".to_string(),
-                        granularity: Some("month".to_string()),
-                        date_range: None,
-                    }
-                ]),
-                order: None,
-                limit: None,
-                offset: None,
-                filters: None,
-                ungrouped: None,
-            }
+        assert!(logical_plan
+            .find_cube_scan_wrapper()
+            .wrapped_sql
+            .unwrap()
+            .sql
+            .contains("LIMIT 1001"));
+
+        let physical_plan = query_plan.as_physical_plan().await.unwrap();
+        println!(
+            "Physical plan: {}",
+            displayable(physical_plan.as_ref()).indent()
         );
     }
 
@@ -6705,29 +6678,18 @@ ORDER BY "ca_4" ASC
         )
         .await;
 
+        let logical_plan = query_plan.as_logical_plan();
+        assert!(logical_plan
+            .find_cube_scan_wrapper()
+            .wrapped_sql
+            .unwrap()
+            .sql
+            .contains("ORDER BY"));
+
         let physical_plan = query_plan.as_physical_plan().await.unwrap();
         println!(
             "Physical plan: {}",
             displayable(physical_plan.as_ref()).indent()
-        );
-
-        let logical_plan = query_plan.as_logical_plan();
-        assert_eq!(
-            logical_plan.find_cube_scan().request,
-            V1LoadRequestQuery {
-                measures: Some(vec![
-                    "KibanaSampleDataEcommerce.sumPrice".to_string(),
-                    "KibanaSampleDataEcommerce.count".to_string()
-                ]),
-                segments: Some(vec![]),
-                dimensions: Some(vec!["Logs.read".to_string()]),
-                time_dimensions: None,
-                order: None,
-                limit: None,
-                offset: None,
-                filters: None,
-                ungrouped: None,
-            }
         );
 
         Ok(())
@@ -6775,6 +6737,24 @@ ORDER BY
         .await;
 
         let logical_plan = query_plan.as_logical_plan();
+
+        if Rewriter::sql_push_down_enabled() {
+            let logical_plan = query_plan.as_logical_plan();
+            assert!(logical_plan
+                .find_cube_scan_wrapper()
+                .wrapped_sql
+                .unwrap()
+                .sql
+                .contains("ORDER BY"));
+
+            let physical_plan = query_plan.as_physical_plan().await.unwrap();
+            println!(
+                "Physical plan: {}",
+                displayable(physical_plan.as_ref()).indent()
+            );
+            return Ok(());
+        }
+
         assert_eq!(
             logical_plan.find_cube_scan().request,
             V1LoadRequestQuery {
@@ -11300,23 +11280,17 @@ ORDER BY
         .await;
 
         let logical_plan = query_plan.as_logical_plan();
-        assert_eq!(
-            logical_plan.find_cube_scan().request,
-            V1LoadRequestQuery {
-                measures: Some(vec![]),
-                segments: Some(vec![]),
-                dimensions: Some(vec![]),
-                time_dimensions: Some(vec![V1LoadRequestQueryTimeDimension {
-                    dimension: "KibanaSampleDataEcommerce.order_date".to_owned(),
-                    granularity: Some("month".to_string()),
-                    date_range: None,
-                }]),
-                order: None,
-                limit: None,
-                offset: None,
-                filters: None,
-                ungrouped: Some(true),
-            }
+        assert!(logical_plan
+            .find_cube_scan_wrapper()
+            .wrapped_sql
+            .unwrap()
+            .sql
+            .contains("EXTRACT(MONTH"));
+
+        let physical_plan = query_plan.as_physical_plan().await.unwrap();
+        println!(
+            "Physical plan: {}",
+            displayable(physical_plan.as_ref()).indent()
         );
 
         Ok(())
@@ -11370,6 +11344,25 @@ ORDER BY
         .await;
 
         let logical_plan = query_plan.as_logical_plan();
+
+        if Rewriter::sql_push_down_enabled() {
+            let logical_plan = query_plan.as_logical_plan();
+            let sql = logical_plan
+                .find_cube_scan_wrapper()
+                .wrapped_sql
+                .unwrap()
+                .sql;
+            assert!(sql.contains("LIMIT 100"));
+            assert!(sql.contains("EXTRACT(DOY"));
+
+            let physical_plan = query_plan.as_physical_plan().await.unwrap();
+            println!(
+                "Physical plan: {}",
+                displayable(physical_plan.as_ref()).indent()
+            );
+            return Ok(());
+        }
+
         assert_eq!(
             logical_plan.find_cube_scan().request,
             V1LoadRequestQuery {
@@ -11487,6 +11480,25 @@ ORDER BY
         .await;
 
         let logical_plan = query_plan.as_logical_plan();
+
+        if Rewriter::sql_push_down_enabled() {
+            let logical_plan = query_plan.as_logical_plan();
+            let sql = logical_plan
+                .find_cube_scan_wrapper()
+                .wrapped_sql
+                .unwrap()
+                .sql;
+            assert!(sql.contains("LIMIT 100"));
+            assert!(sql.contains("EXTRACT(DOW"));
+
+            let physical_plan = query_plan.as_physical_plan().await.unwrap();
+            println!(
+                "Physical plan: {}",
+                displayable(physical_plan.as_ref()).indent()
+            );
+            return Ok(());
+        }
+
         assert_eq!(
             logical_plan.find_cube_scan().request,
             V1LoadRequestQuery {
@@ -13614,7 +13626,9 @@ ORDER BY "source"."str0" ASC
 
     #[tokio::test]
     async fn test_metabase_bins() {
-        let logical_plan = convert_select_to_query_plan(
+        init_logger();
+
+        let query_plan = convert_select_to_query_plan(
             "
             SELECT ((floor(((\"public\".\"KibanaSampleDataEcommerce\".\"taxful_total_price\" - 1.1) / 0.025)) * 0.025) + 1.1) AS \"taxful_total_price\", count(*) AS \"count\"
             FROM \"public\".\"KibanaSampleDataEcommerce\"
@@ -13622,7 +13636,25 @@ ORDER BY "source"."str0" ASC
             ORDER BY ((floor(((\"public\".\"KibanaSampleDataEcommerce\".\"taxful_total_price\" - 1.1) / 0.025)) * 0.025) + 1.1) ASC;
             ".to_string(), 
             DatabaseProtocol::PostgreSQL
-        ).await.as_logical_plan();
+        ).await;
+        let logical_plan = query_plan.as_logical_plan();
+
+        if Rewriter::sql_push_down_enabled() {
+            let logical_plan = query_plan.as_logical_plan();
+            assert!(logical_plan
+                .find_cube_scan_wrapper()
+                .wrapped_sql
+                .unwrap()
+                .sql
+                .contains("ORDER BY"));
+
+            let physical_plan = query_plan.as_physical_plan().await.unwrap();
+            println!(
+                "Physical plan: {}",
+                displayable(physical_plan.as_ref()).indent()
+            );
+            return;
+        }
 
         assert_eq!(
             logical_plan.find_cube_scan().request,
@@ -13833,7 +13865,7 @@ ORDER BY "source"."str0" ASC
     async fn metabase_aggreagte_by_week_of_year() {
         init_logger();
 
-        let logical_plan = convert_select_to_query_plan(
+        let query_plan = convert_select_to_query_plan(
                 "SELECT ceil((CAST(extract(doy from CAST(date_trunc('week', \"KibanaSampleDataEcommerce\".\"order_date\") AS timestamp)) AS integer) / 7.0)) AS \"order_date\", 
                                min(\"KibanaSampleDataEcommerce\".\"minPrice\") AS \"min\"
                 FROM \"KibanaSampleDataEcommerce\"
@@ -13842,8 +13874,24 @@ ORDER BY "source"."str0" ASC
                 .to_string(),
             DatabaseProtocol::PostgreSQL,
         )
-        .await
-        .as_logical_plan();
+        .await;
+        let logical_plan = query_plan.as_logical_plan();
+
+        if Rewriter::sql_push_down_enabled() {
+            assert!(logical_plan
+                .find_cube_scan_wrapper()
+                .wrapped_sql
+                .unwrap()
+                .sql
+                .contains("ORDER BY"));
+
+            let physical_plan = query_plan.as_physical_plan().await.unwrap();
+            println!(
+                "Physical plan: {}",
+                displayable(physical_plan.as_ref()).indent()
+            );
+            return;
+        }
 
         assert_eq!(
             logical_plan.find_cube_scan().request,
@@ -18393,7 +18441,7 @@ ORDER BY "source"."str0" ASC
     async fn test_thoughtspot_extract_equals() {
         init_logger();
 
-        let logical_plan = convert_select_to_query_plan(
+        let query_plan = convert_select_to_query_plan(
             r#"
             SELECT (EXTRACT(DAY FROM "ta_1"."order_date") = 15.0) "ca_1"
             FROM KibanaSampleDataEcommerce "ta_1"
@@ -18403,8 +18451,27 @@ ORDER BY "source"."str0" ASC
             .to_string(),
             DatabaseProtocol::PostgreSQL,
         )
-        .await
-        .as_logical_plan();
+        .await;
+        let logical_plan = query_plan.as_logical_plan();
+
+        if Rewriter::sql_push_down_enabled() {
+            let logical_plan = query_plan.as_logical_plan();
+            let sql = logical_plan
+                .find_cube_scan_wrapper()
+                .wrapped_sql
+                .unwrap()
+                .sql;
+            assert!(sql.contains("ORDER BY"));
+            assert!(sql.contains("EXTRACT(DAY"));
+            assert!(sql.contains("="));
+
+            let physical_plan = query_plan.as_physical_plan().await.unwrap();
+            println!(
+                "Physical plan: {}",
+                displayable(physical_plan.as_ref()).indent()
+            );
+            return;
+        }
 
         assert_eq!(
             logical_plan.find_cube_scan().request,
@@ -18430,7 +18497,7 @@ ORDER BY "source"."str0" ASC
     async fn test_thoughtspot_extract_month_of_quarter() {
         init_logger();
 
-        let logical_plan = convert_select_to_query_plan(
+        let query_plan = convert_select_to_query_plan(
             r#"
             SELECT 
                 (((EXTRACT(MONTH FROM "ta_1"."order_date") - 1) % 3) + 1) "ca_1", 
@@ -18447,8 +18514,27 @@ ORDER BY "source"."str0" ASC
             .to_string(),
             DatabaseProtocol::PostgreSQL,
         )
-        .await
-        .as_logical_plan();
+        .await;
+        let logical_plan = query_plan.as_logical_plan();
+
+        if Rewriter::sql_push_down_enabled() {
+            let logical_plan = query_plan.as_logical_plan();
+            let sql = logical_plan
+                .find_cube_scan_wrapper()
+                .wrapped_sql
+                .unwrap()
+                .sql;
+            assert!(sql.contains("ORDER BY"));
+            assert!(sql.contains("EXTRACT(MONTH"));
+            assert!(sql.contains("% 3"));
+
+            let physical_plan = query_plan.as_physical_plan().await.unwrap();
+            println!(
+                "Physical plan: {}",
+                displayable(physical_plan.as_ref()).indent()
+            );
+            return;
+        }
 
         assert_eq!(
             logical_plan.find_cube_scan().request,
@@ -18474,7 +18560,7 @@ ORDER BY "source"."str0" ASC
     async fn test_thoughtspot_extract_lt_extract() {
         init_logger();
 
-        let logical_plan = convert_select_to_query_plan(
+        let query_plan = convert_select_to_query_plan(
             r#"
             SELECT (EXTRACT(MONTH FROM "ta_1"."order_date") < (EXTRACT(MONTH FROM "ta_1"."last_mod") + 1.0)) "ca_1"
             FROM KibanaSampleDataEcommerce "ta_1"
@@ -18484,8 +18570,27 @@ ORDER BY "source"."str0" ASC
             .to_string(),
             DatabaseProtocol::PostgreSQL,
         )
-        .await
-        .as_logical_plan();
+        .await;
+        let logical_plan = query_plan.as_logical_plan();
+
+        if Rewriter::sql_push_down_enabled() {
+            let logical_plan = query_plan.as_logical_plan();
+            let sql = logical_plan
+                .find_cube_scan_wrapper()
+                .wrapped_sql
+                .unwrap()
+                .sql;
+            assert!(sql.contains("ORDER BY"));
+            assert!(sql.contains("EXTRACT(MONTH"));
+            assert!(sql.contains("<"));
+
+            let physical_plan = query_plan.as_physical_plan().await.unwrap();
+            println!(
+                "Physical plan: {}",
+                displayable(physical_plan.as_ref()).indent()
+            );
+            return;
+        }
 
         assert_eq!(
             logical_plan.find_cube_scan().request,
@@ -18534,20 +18639,33 @@ ORDER BY "source"."str0" ASC
         .await
         .as_logical_plan();
 
-        assert_eq!(
-            logical_plan.find_cube_scan().request,
-            V1LoadRequestQuery {
-                measures: Some(vec![]),
-                dimensions: Some(vec!["KibanaSampleDataEcommerce.customer_gender".to_string()]),
-                segments: Some(vec![]),
-                time_dimensions: None,
-                order: None,
-                limit: None,
-                offset: None,
-                filters: None,
-                ungrouped: None,
-            }
-        );
+        if !Rewriter::sql_push_down_enabled() {
+            assert_eq!(
+                logical_plan.find_cube_scan().request,
+                V1LoadRequestQuery {
+                    measures: Some(vec![]),
+                    dimensions: Some(vec!["KibanaSampleDataEcommerce.customer_gender".to_string()]),
+                    segments: Some(vec![]),
+                    time_dimensions: None,
+                    order: None,
+                    limit: None,
+                    offset: None,
+                    filters: None,
+                    ungrouped: None,
+                }
+            );
+        } else {
+            let sql = logical_plan
+                .find_cube_scan_wrapper()
+                .wrapped_sql
+                .unwrap()
+                .sql;
+
+            assert!(sql.contains("LOWER("));
+            assert!(sql.contains(" OR "));
+            assert!(sql.contains("="));
+            assert!(sql.contains("ORDER BY "));
+        }
 
         let logical_plan = convert_select_to_query_plan(
             r#"
@@ -18565,24 +18683,36 @@ ORDER BY "source"."str0" ASC
         .await
         .as_logical_plan();
 
-        assert_eq!(
-            logical_plan.find_cube_scan().request,
-            V1LoadRequestQuery {
-                measures: Some(vec![]),
-                dimensions: Some(vec![
-                    "KibanaSampleDataEcommerce.customer_gender".to_string(),
-                    "KibanaSampleDataEcommerce.notes".to_string(),
-                ]),
-                segments: Some(vec![]),
-                time_dimensions: None,
-                order: None,
-                limit: None,
-                offset: None,
-                filters: None,
-                ungrouped: None,
-            }
-        );
+        if !Rewriter::sql_push_down_enabled() {
+            assert_eq!(
+                logical_plan.find_cube_scan().request,
+                V1LoadRequestQuery {
+                    measures: Some(vec![]),
+                    dimensions: Some(vec![
+                        "KibanaSampleDataEcommerce.customer_gender".to_string(),
+                        "KibanaSampleDataEcommerce.notes".to_string(),
+                    ]),
+                    segments: Some(vec![]),
+                    time_dimensions: None,
+                    order: None,
+                    limit: None,
+                    offset: None,
+                    filters: None,
+                    ungrouped: None,
+                }
+            );
+        } else {
+            let sql = logical_plan
+                .find_cube_scan_wrapper()
+                .wrapped_sql
+                .unwrap()
+                .sql;
 
+            assert!(sql.contains("LOWER("));
+            assert!(sql.contains(" OR "));
+            assert!(sql.contains("="));
+            assert!(sql.contains("ORDER BY "));
+        }
         if !Rewriter::sql_push_down_enabled() {
             return;
         }
@@ -18621,7 +18751,7 @@ ORDER BY "source"."str0" ASC
     async fn test_thoughtspot_column_comparison() {
         init_logger();
 
-        let logical_plan = convert_select_to_query_plan(
+        let query_plan = convert_select_to_query_plan(
             r#"
             SELECT ("ta_1"."taxful_total_price" > 10.0) "ca_1"
             FROM KibanaSampleDataEcommerce "ta_1"
@@ -18631,8 +18761,26 @@ ORDER BY "source"."str0" ASC
             .to_string(),
             DatabaseProtocol::PostgreSQL,
         )
-        .await
-        .as_logical_plan();
+        .await;
+        let logical_plan = query_plan.as_logical_plan();
+
+        if Rewriter::sql_push_down_enabled() {
+            let logical_plan = query_plan.as_logical_plan();
+            let sql = logical_plan
+                .find_cube_scan_wrapper()
+                .wrapped_sql
+                .unwrap()
+                .sql;
+            assert!(sql.contains("ORDER BY"));
+            assert!(sql.contains(">"));
+
+            let physical_plan = query_plan.as_physical_plan().await.unwrap();
+            println!(
+                "Physical plan: {}",
+                displayable(physical_plan.as_ref()).indent()
+            );
+            return;
+        }
 
         assert_eq!(
             logical_plan.find_cube_scan().request,
@@ -19255,7 +19403,7 @@ ORDER BY "source"."str0" ASC
     async fn test_thoughtspot_left_right() {
         init_logger();
 
-        let logical_plan = convert_select_to_query_plan(
+        let query_plan = convert_select_to_query_plan(
             r#"
             SELECT
                 "ta_1"."customer_gender" "ca_1",
@@ -19274,8 +19422,27 @@ ORDER BY "source"."str0" ASC
             .to_string(),
             DatabaseProtocol::PostgreSQL,
         )
-        .await
-        .as_logical_plan();
+        .await;
+        let logical_plan = query_plan.as_logical_plan();
+
+        if Rewriter::sql_push_down_enabled() {
+            let logical_plan = query_plan.as_logical_plan();
+            let sql = logical_plan
+                .find_cube_scan_wrapper()
+                .wrapped_sql
+                .unwrap()
+                .sql;
+            assert!(sql.contains("ORDER BY"));
+            assert!(sql.contains("LEFT("));
+            assert!(sql.contains("RIGHT("));
+
+            let physical_plan = query_plan.as_physical_plan().await.unwrap();
+            println!(
+                "Physical plan: {}",
+                displayable(physical_plan.as_ref()).indent()
+            );
+            return;
+        }
 
         assert_eq!(
             logical_plan.find_cube_scan().request,
@@ -19639,7 +19806,7 @@ ORDER BY "source"."str0" ASC
         }
         init_logger();
 
-        let logical_plan = convert_select_to_query_plan(
+        let query_plan = convert_select_to_query_plan(
             r#"
             SELECT
                 count_25 "__Row Count",
@@ -19670,33 +19837,22 @@ ORDER BY "source"."str0" ASC
             .to_string(),
             DatabaseProtocol::PostgreSQL,
         )
-        .await
-        .as_logical_plan();
+        .await;
 
-        let cube_scans = logical_plan
-            .find_cube_scans()
-            .iter()
-            .map(|cube| cube.request.clone())
-            .collect::<Vec<V1LoadRequestQuery>>();
+        let logical_plan = query_plan.as_logical_plan();
+        let sql = logical_plan
+            .find_cube_scan_wrapper()
+            .wrapped_sql
+            .unwrap()
+            .sql;
+        assert!(sql.contains("LIMIT 10001"));
+        assert!(sql.contains("ORDER BY"));
 
-        assert!(cube_scans.contains(&V1LoadRequestQuery {
-            measures: Some(vec![]),
-            dimensions: Some(vec!["KibanaSampleDataEcommerce.order_date".to_string()]),
-            segments: Some(vec![]),
-            time_dimensions: Some(vec![V1LoadRequestQueryTimeDimension {
-                dimension: "KibanaSampleDataEcommerce.order_date".to_string(),
-                granularity: Some("second".to_string()),
-                date_range: None,
-            }]),
-            // Order and Limit and nearly pushed to CubeScan but the Projection
-            // before TableScan is a post-processing projection.
-            // Splitting such projections into two may be a good idea.
-            order: None,
-            limit: None,
-            offset: None,
-            filters: None,
-            ungrouped: Some(true),
-        }))
+        let physical_plan = query_plan.as_physical_plan().await.unwrap();
+        println!(
+            "Physical plan: {}",
+            displayable(physical_plan.as_ref()).indent()
+        );
     }
 
     #[tokio::test]
@@ -21042,12 +21198,14 @@ ORDER BY "source"."str0" ASC
             logical_plan.find_cube_scan().request,
             V1LoadRequestQuery {
                 measures: Some(vec![]),
-                dimensions: Some(vec![
-                    "KibanaSampleDataEcommerce.order_date".to_string(),
-                    "KibanaSampleDataEcommerce.customer_gender".to_string()
-                ]),
+                dimensions: Some(vec!["KibanaSampleDataEcommerce.customer_gender".to_string()]),
                 segments: Some(vec![]),
                 time_dimensions: Some(vec![
+                    V1LoadRequestQueryTimeDimension {
+                        dimension: "KibanaSampleDataEcommerce.order_date".to_string(),
+                        granularity: Some("day".to_string()),
+                        date_range: None,
+                    },
                     V1LoadRequestQueryTimeDimension {
                         dimension: "KibanaSampleDataEcommerce.order_date".to_string(),
                         granularity: Some("year".to_string()),
@@ -21137,12 +21295,13 @@ ORDER BY "source"."str0" ASC
             logical_plan.find_cube_scan().request,
             V1LoadRequestQuery {
                 measures: Some(vec![]),
-                dimensions: Some(vec![
-                    "KibanaSampleDataEcommerce.order_date".to_string(),
-                    "KibanaSampleDataEcommerce.customer_gender".to_string()
-                ]),
+                dimensions: Some(vec!["KibanaSampleDataEcommerce.customer_gender".to_string()]),
                 segments: Some(vec![]),
-                time_dimensions: None,
+                time_dimensions: Some(vec![V1LoadRequestQueryTimeDimension {
+                    dimension: "KibanaSampleDataEcommerce.order_date".to_string(),
+                    granularity: Some("day".to_string()),
+                    date_range: None,
+                },]),
                 order: None,
                 limit: None,
                 offset: None,
@@ -21412,23 +21571,19 @@ ORDER BY "source"."str0" ASC
         )
         .await;
 
-        assert_eq!(
-            query_plan.as_logical_plan().find_cube_scan().request,
-            V1LoadRequestQuery {
-                measures: Some(vec!["KibanaSampleDataEcommerce.count".to_string()]),
-                dimensions: Some(vec![]),
-                segments: Some(vec![]),
-                time_dimensions: Some(vec![V1LoadRequestQueryTimeDimension {
-                    dimension: "KibanaSampleDataEcommerce.order_date".to_string(),
-                    granularity: Some("day".to_string()),
-                    date_range: None,
-                }]),
-                order: None,
-                limit: None,
-                offset: None,
-                filters: None,
-                ungrouped: None,
-            }
+        let logical_plan = query_plan.as_logical_plan();
+        let sql = logical_plan
+            .find_cube_scan_wrapper()
+            .wrapped_sql
+            .unwrap()
+            .sql;
+        assert!(sql.contains("LIMIT 25000"));
+        assert!(sql.contains("ORDER BY"));
+
+        let physical_plan = query_plan.as_physical_plan().await.unwrap();
+        println!(
+            "Physical plan: {}",
+            displayable(physical_plan.as_ref()).indent()
         );
     }
 
@@ -21500,19 +21655,18 @@ ORDER BY "source"."str0" ASC
         )
         .await;
 
-        assert_eq!(
-            query_plan.as_logical_plan().find_cube_scan().request,
-            V1LoadRequestQuery {
-                measures: Some(vec![]),
-                dimensions: Some(vec!["KibanaSampleDataEcommerce.order_date".to_string()]),
-                segments: Some(vec![]),
-                time_dimensions: None,
-                order: None,
-                limit: None,
-                offset: None,
-                filters: None,
-                ungrouped: None,
-            }
+        let logical_plan = query_plan.as_logical_plan();
+        assert!(logical_plan
+            .find_cube_scan_wrapper()
+            .wrapped_sql
+            .unwrap()
+            .sql
+            .contains("LIMIT 101"));
+
+        let physical_plan = query_plan.as_physical_plan().await.unwrap();
+        println!(
+            "Physical plan: {}",
+            displayable(physical_plan.as_ref()).indent()
         );
     }
 
@@ -21740,21 +21894,19 @@ ORDER BY "source"."str0" ASC
         )
         .await;
 
-        assert_eq!(
-            query_plan.as_logical_plan().find_cube_scan().request,
-            V1LoadRequestQuery {
-                measures: Some(vec![]),
-                dimensions: Some(vec![
-                    "KibanaSampleDataEcommerce.taxful_total_price".to_string()
-                ]),
-                segments: Some(vec![]),
-                time_dimensions: None,
-                order: None,
-                limit: None,
-                offset: None,
-                filters: None,
-                ungrouped: None,
-            }
+        let logical_plan = query_plan.as_logical_plan();
+        let sql = logical_plan
+            .find_cube_scan_wrapper()
+            .wrapped_sql
+            .unwrap()
+            .sql;
+        assert!(sql.contains("ORDER BY"));
+        assert!(sql.contains("-"));
+
+        let physical_plan = query_plan.as_physical_plan().await.unwrap();
+        println!(
+            "Physical plan: {}",
+            displayable(physical_plan.as_ref()).indent()
         );
     }
 
@@ -22751,6 +22903,88 @@ LIMIT {{ limit }}{% endif %}"#.to_string(),
                 }]),
                 ungrouped: Some(true),
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn test_quicksight_cast_with_limit_no_sort() {
+        if !Rewriter::sql_push_down_enabled() {
+            return;
+        }
+        init_logger();
+
+        let logical_plan = convert_select_to_query_plan(
+            r#"
+            SELECT
+                "customer_gender" AS "customer_gender",
+                CAST("has_subscription" AS INTEGER) AS "has_subscription"
+            FROM "public"."KibanaSampleDataEcommerce"
+            GROUP BY
+                "customer_gender",
+                CAST("has_subscription" AS INTEGER)
+            LIMIT 500
+            "#
+            .to_string(),
+            DatabaseProtocol::PostgreSQL,
+        )
+        .await
+        .as_logical_plan();
+
+        assert_eq!(
+            logical_plan.find_cube_scan().request,
+            V1LoadRequestQuery {
+                measures: Some(vec![]),
+                dimensions: Some(vec![
+                    "KibanaSampleDataEcommerce.customer_gender".to_string(),
+                    "KibanaSampleDataEcommerce.has_subscription".to_string(),
+                ]),
+                segments: Some(vec![]),
+                time_dimensions: None,
+                order: None,
+                limit: Some(500),
+                offset: None,
+                filters: None,
+                ungrouped: None,
+            }
+        )
+    }
+
+    #[tokio::test]
+    async fn test_quicksight_cast_with_limit_and_sort() {
+        if !Rewriter::sql_push_down_enabled() {
+            return;
+        }
+        init_logger();
+
+        let query_plan = convert_select_to_query_plan(
+            r#"
+            SELECT
+                "customer_gender" AS "customer_gender",
+                CAST("has_subscription" AS INTEGER) AS "has_subscription"
+            FROM "public"."KibanaSampleDataEcommerce"
+            GROUP BY
+                "customer_gender",
+                CAST("has_subscription" AS INTEGER)
+            ORDER BY 1 NULLS LAST
+            LIMIT 250
+            "#
+            .to_string(),
+            DatabaseProtocol::PostgreSQL,
+        )
+        .await;
+
+        let logical_plan = query_plan.as_logical_plan();
+        assert!(logical_plan
+            .find_cube_scan_wrapper()
+            .wrapped_sql
+            .unwrap()
+            .sql
+            .contains("LIMIT 250"));
+
+        let physical_plan = query_plan.as_physical_plan().await.unwrap();
+        println!(
+            "Physical plan: {}",
+            displayable(physical_plan.as_ref()).indent()
         );
     }
 }
