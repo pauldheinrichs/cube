@@ -7,10 +7,10 @@ use crate::{
         subquery, transforming_chain_rewrite, transforming_rewrite, wrapped_select,
         wrapped_select_filter_expr_empty_tail, wrapped_select_having_expr_empty_tail,
         wrapped_select_joins_empty_tail, wrapped_select_order_expr_empty_tail,
-        wrapped_select_projection_expr_empty_tail, wrapped_select_subqueries_empty_tail,
-        wrapped_select_window_expr_empty_tail, wrapper_pullup_replacer, wrapper_pushdown_replacer,
+        wrapped_select_projection_expr_empty, wrapped_select_subqueries_empty_tail,
+        wrapped_select_window_expr_empty, wrapper_pullup_replacer, wrapper_pushdown_replacer,
         AggregateFunctionExprDistinct, AggregateFunctionExprFun, AliasExprAlias, ColumnExprColumn,
-        LogicalPlanLanguage, WrappedSelectUngrouped, WrapperPullupReplacerUngrouped,
+        ListType, LogicalPlanLanguage, WrappedSelectUngrouped, WrapperPullupReplacerUngrouped,
     },
     transport::V1CubeMetaMeasureExt,
     var, var_iter,
@@ -44,7 +44,7 @@ impl WrapperRules {
                 wrapped_select(
                     "WrappedSelectSelectType:Aggregate",
                     wrapper_pullup_replacer(
-                        wrapped_select_projection_expr_empty_tail(),
+                        wrapped_select_projection_expr_empty(),
                         "?alias_to_cube",
                         "?ungrouped",
                         "WrapperPullupReplacerInProjection:false",
@@ -72,7 +72,7 @@ impl WrapperRules {
                         "?cube_members",
                     ),
                     wrapper_pullup_replacer(
-                        wrapped_select_window_expr_empty_tail(),
+                        wrapped_select_window_expr_empty(),
                         "?alias_to_cube",
                         "?ungrouped",
                         "WrapperPullupReplacerInProjection:false",
@@ -158,18 +158,18 @@ impl WrapperRules {
             },
         );
 
-        Self::list_pushdown_pullup_rules(
+        Self::flat_list_pushdown_pullup_rules(
             rules,
             "wrapper-aggregate-aggr-expr",
-            "AggregateAggrExpr",
-            "WrappedSelectAggrExpr",
+            ListType::AggregateAggrExpr,
+            ListType::WrappedSelectAggrExpr,
         );
 
-        Self::list_pushdown_pullup_rules(
+        Self::flat_list_pushdown_pullup_rules(
             rules,
             "wrapper-aggregate-group-expr",
-            "AggregateGroupExpr",
-            "WrappedSelectGroupExpr",
+            ListType::AggregateGroupExpr,
+            ListType::WrappedSelectGroupExpr,
         );
     }
 
@@ -202,7 +202,7 @@ impl WrapperRules {
                 wrapped_select(
                     "WrappedSelectSelectType:Aggregate",
                     wrapper_pullup_replacer(
-                        wrapped_select_projection_expr_empty_tail(),
+                        wrapped_select_projection_expr_empty(),
                         "?alias_to_cube",
                         "?ungrouped",
                         "WrapperPullupReplacerInProjection:false",
@@ -230,7 +230,7 @@ impl WrapperRules {
                         "?cube_members",
                     ),
                     wrapper_pullup_replacer(
-                        wrapped_select_window_expr_empty_tail(),
+                        wrapped_select_window_expr_empty(),
                         "?alias_to_cube",
                         "?ungrouped",
                         "WrapperPullupReplacerInProjection:false",

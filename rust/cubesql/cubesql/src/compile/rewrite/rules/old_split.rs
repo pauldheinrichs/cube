@@ -1,15 +1,18 @@
 use super::utils;
 use crate::{
     compile::rewrite::{
-        agg_fun_expr, aggr_aggr_expr, aggr_aggr_expr_empty_tail, aggr_group_expr,
-        aggr_group_expr_empty_tail, aggregate, alias_expr,
+        agg_fun_expr, aggregate, aggregate_aggr_expr_empty as aggr_aggr_expr_empty_tail,
+        aggregate_aggr_expr_legacy as aggr_aggr_expr,
+        aggregate_group_expr_empty as aggr_group_expr_empty_tail,
+        aggregate_group_expr_legacy as aggr_group_expr, alias_expr,
         analysis::{ConstantFolding, LogicalPlanAnalysis, OriginalExpr},
         binary_expr, cast_expr, cast_expr_explicit, column_expr, cube_scan, event_notification,
-        fun_expr, group_aggregate_split_replacer, group_expr_split_replacer,
-        inner_aggregate_split_replacer, is_not_null_expr, is_null_expr, literal_expr,
-        literal_float, literal_int, literal_string, original_expr_name,
+        fun_expr as fun_expr_flat, fun_expr_args, group_aggregate_split_replacer,
+        group_expr_split_replacer, inner_aggregate_split_replacer, is_not_null_expr, is_null_expr,
+        literal_expr, literal_float, literal_int, literal_string, original_expr_name,
         outer_aggregate_split_replacer, outer_projection_split_replacer, projection,
-        projection_expr, projection_expr_empty_tail, rewrite,
+        projection_expr_empty as projection_expr_empty_tail,
+        projection_expr_legacy as projection_expr, rewrite,
         rewriter::RewriteRules,
         rules::members::MemberRules,
         transforming_chain_rewrite, transforming_rewrite, udf_expr, AggregateFunctionExprDistinct,
@@ -31,6 +34,10 @@ use datafusion::{
 };
 use egg::{EGraph, Id, Rewrite, Subst, Var};
 use std::{fmt::Display, ops::Index, sync::Arc};
+
+fn fun_expr(name: &str, args: Vec<impl Display>) -> String {
+    fun_expr_flat(name, fun_expr_args(args))
+}
 
 pub struct OldSplitRules {
     meta_context: Arc<MetaContext>,

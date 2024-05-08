@@ -84,10 +84,10 @@ macro_rules! add_expr_data_node {
 }
 
 macro_rules! add_expr_list_node {
-    ($graph:expr, $value_expr:expr, $query_params:expr, $field_variant:ident) => {{
+    ($graph:expr, $value_expr:expr, $query_params:expr, $field_variant:ident, $sql_push_down:expr) => {{
         let list = $value_expr
             .iter()
-            .map(|expr| Self::add_expr_replace_params($graph, expr, $query_params))
+            .map(|expr| Self::add_expr_replace_params($graph, expr, $query_params, $sql_push_down))
             .collect::<Result<Vec<_>, _>>()?;
         let mut current = $graph.add(LogicalPlanLanguage::$field_variant(Vec::new()));
         for i in list.into_iter().rev() {
@@ -98,40 +98,60 @@ macro_rules! add_expr_list_node {
 }
 
 macro_rules! add_expr_flat_list_node {
-    ($graph:expr, $value_expr:expr, $query_params:expr, $field_variant:ident) => {{
+    ($graph:expr, $value_expr:expr, $query_params:expr, $field_variant:ident, $sql_push_down:expr) => {{
         let list = $value_expr
             .iter()
-            .map(|expr| Self::add_expr_replace_params($graph, expr, $query_params))
+            .map(|expr| Self::add_expr_replace_params($graph, expr, $query_params, $sql_push_down))
             .collect::<Result<Vec<_>, _>>()?;
-        $graph.add(LogicalPlanLanguage::$field_variant(list))
+        if $sql_push_down {
+            $graph.add(LogicalPlanLanguage::$field_variant(list))
+        } else {
+            let mut current = $graph.add(LogicalPlanLanguage::$field_variant(Vec::new()));
+            for i in list.into_iter().rev() {
+                current = $graph.add(LogicalPlanLanguage::$field_variant(vec![i, current]));
+            }
+            current
+        }
     }};
 }
 
 macro_rules! add_binary_expr_list_node {
-    ($graph:expr, $value_expr:expr, $query_params:expr, $field_variant:ident) => {{
-        fn to_binary_tree(
-            graph: &mut EGraph<LogicalPlanLanguage, LogicalPlanAnalysis>,
-            list: &[Id],
-        ) -> Id {
-            if list.len() == 0 {
-                graph.add(LogicalPlanLanguage::$field_variant(Vec::new()))
-            } else if list.len() == 1 {
-                let empty = graph.add(LogicalPlanLanguage::$field_variant(Vec::new()));
-                graph.add(LogicalPlanLanguage::$field_variant(vec![list[0], empty]))
-            } else if list.len() == 2 {
-                graph.add(LogicalPlanLanguage::$field_variant(vec![list[0], list[1]]))
-            } else {
-                let middle = list.len() / 2;
-                let left = to_binary_tree(graph, &list[..middle]);
-                let right = to_binary_tree(graph, &list[middle..]);
-                graph.add(LogicalPlanLanguage::$field_variant(vec![left, right]))
+    ($graph:expr, $value_expr:expr, $query_params:expr, $field_variant:ident, $sql_push_down:expr) => {{
+        if $sql_push_down {
+            add_expr_flat_list_node!(
+                $graph,
+                $value_expr,
+                $query_params,
+                $field_variant,
+                $sql_push_down
+            )
+        } else {
+            fn to_binary_tree(
+                graph: &mut EGraph<LogicalPlanLanguage, LogicalPlanAnalysis>,
+                list: &[Id],
+            ) -> Id {
+                if list.len() == 0 {
+                    graph.add(LogicalPlanLanguage::$field_variant(Vec::new()))
+                } else if list.len() == 1 {
+                    let empty = graph.add(LogicalPlanLanguage::$field_variant(Vec::new()));
+                    graph.add(LogicalPlanLanguage::$field_variant(vec![list[0], empty]))
+                } else if list.len() == 2 {
+                    graph.add(LogicalPlanLanguage::$field_variant(vec![list[0], list[1]]))
+                } else {
+                    let middle = list.len() / 2;
+                    let left = to_binary_tree(graph, &list[..middle]);
+                    let right = to_binary_tree(graph, &list[middle..]);
+                    graph.add(LogicalPlanLanguage::$field_variant(vec![left, right]))
+                }
             }
+            let list = $value_expr
+                .iter()
+                .map(|expr| {
+                    Self::add_expr_replace_params($graph, expr, $query_params, $sql_push_down)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            to_binary_tree($graph, &list)
         }
-        let list = $value_expr
-            .iter()
-            .map(|expr| Self::add_expr_replace_params($graph, expr, $query_params))
-            .collect::<Result<Vec<_>, _>>()?;
-        to_binary_tree($graph, &list)
     }};
 }
 
@@ -171,6 +191,7 @@ lazy_static! {
 pub struct LogicalPlanToLanguageConverter {
     graph: EGraph<LogicalPlanLanguage, LogicalPlanAnalysis>,
     cube_context: Arc<CubeContext>,
+    sql_push_down: bool,
 }
 
 #[derive(Default, Clone)]
@@ -180,6 +201,7 @@ pub struct LogicalPlanToLanguageContext {
 
 impl LogicalPlanToLanguageConverter {
     pub fn new(cube_context: Arc<CubeContext>) -> Self {
+        let sql_push_down = Self::sql_push_down();
         Self {
             graph: EGraph::<LogicalPlanLanguage, LogicalPlanAnalysis>::new(
                 LogicalPlanAnalysis::new(
@@ -188,24 +210,46 @@ impl LogicalPlanToLanguageConverter {
                 ),
             ),
             cube_context,
+            sql_push_down,
         }
+    }
+
+    fn sql_push_down() -> bool {
+        let push_down_pull_up_split = env::var("CUBESQL_PUSH_DOWN_PULL_UP_SPLIT")
+            .map(|v| match v.to_lowercase().as_str() {
+                "false" => Some(false),
+                "true" => Some(true),
+                _ => None,
+            })
+            .unwrap_or(None);
+        if let Some(push_down_pull_up_split) = push_down_pull_up_split {
+            return push_down_pull_up_split;
+        }
+        env::var("CUBESQL_SQL_PUSH_DOWN")
+            .map(|v| v.to_lowercase() == "true")
+            .unwrap_or(false)
     }
 
     pub fn add_expr(
         graph: &mut EGraph<LogicalPlanLanguage, LogicalPlanAnalysis>,
         expr: &Expr,
     ) -> Result<Id, CubeError> {
-        Self::add_expr_replace_params(graph, expr, &mut None)
+        // TODO: reference self?
+        let sql_push_down = env::var("CUBESQL_SQL_PUSH_DOWN")
+            .map(|v| v.to_lowercase() == "true")
+            .unwrap_or(false);
+        Self::add_expr_replace_params(graph, expr, &mut None, sql_push_down)
     }
 
     pub fn add_expr_replace_params(
         graph: &mut EGraph<LogicalPlanLanguage, LogicalPlanAnalysis>,
         expr: &Expr,
         query_params: &mut Option<HashMap<usize, ScalarValue>>,
+        sql_push_down: bool,
     ) -> Result<Id, CubeError> {
         Ok(match expr {
             Expr::Alias(expr, alias) => {
-                let expr = Self::add_expr_replace_params(graph, expr, query_params)?;
+                let expr = Self::add_expr_replace_params(graph, expr, query_params, sql_push_down)?;
                 let alias = add_expr_data_node!(graph, alias, AliasExprAlias);
                 graph.add(LogicalPlanLanguage::AliasExpr([expr, alias]))
             }
@@ -247,17 +291,19 @@ impl LogicalPlanToLanguageConverter {
                 right,
                 all,
             } => {
-                let left = Self::add_expr_replace_params(graph, left, query_params)?;
+                let left = Self::add_expr_replace_params(graph, left, query_params, sql_push_down)?;
                 let op = add_expr_data_node!(graph, op, AnyExprOp);
-                let right = Self::add_expr_replace_params(graph, right, query_params)?;
+                let right =
+                    Self::add_expr_replace_params(graph, right, query_params, sql_push_down)?;
                 let all = add_expr_data_node!(graph, all, AnyExprAll);
 
                 graph.add(LogicalPlanLanguage::AnyExpr([left, op, right, all]))
             }
             Expr::BinaryExpr { left, op, right } => {
-                let left = Self::add_expr_replace_params(graph, left, query_params)?;
+                let left = Self::add_expr_replace_params(graph, left, query_params, sql_push_down)?;
                 let op = add_expr_data_node!(graph, op, BinaryExprOp);
-                let right = Self::add_expr_replace_params(graph, right, query_params)?;
+                let right =
+                    Self::add_expr_replace_params(graph, right, query_params, sql_push_down)?;
                 graph.add(LogicalPlanLanguage::BinaryExpr([left, op, right]))
             }
             ast @ Expr::Like(Like {
@@ -289,8 +335,9 @@ impl LogicalPlanToLanguageConverter {
                     LikeExprLikeType
                 );
                 let negated = add_expr_data_node!(graph, negated, LikeExprNegated);
-                let expr = Self::add_expr_replace_params(graph, expr, query_params)?;
-                let pattern = Self::add_expr_replace_params(graph, pattern, query_params)?;
+                let expr = Self::add_expr_replace_params(graph, expr, query_params, sql_push_down)?;
+                let pattern =
+                    Self::add_expr_replace_params(graph, pattern, query_params, sql_push_down)?;
                 let escape_char = add_expr_data_node!(graph, escape_char, LikeExprEscapeChar);
                 graph.add(LogicalPlanLanguage::LikeExpr([
                     like_type,
@@ -301,19 +348,19 @@ impl LogicalPlanToLanguageConverter {
                 ]))
             }
             Expr::Not(expr) => {
-                let expr = Self::add_expr_replace_params(graph, expr, query_params)?;
+                let expr = Self::add_expr_replace_params(graph, expr, query_params, sql_push_down)?;
                 graph.add(LogicalPlanLanguage::NotExpr([expr]))
             }
             Expr::IsNotNull(expr) => {
-                let expr = Self::add_expr_replace_params(graph, expr, query_params)?;
+                let expr = Self::add_expr_replace_params(graph, expr, query_params, sql_push_down)?;
                 graph.add(LogicalPlanLanguage::IsNotNullExpr([expr]))
             }
             Expr::IsNull(expr) => {
-                let expr = Self::add_expr_replace_params(graph, expr, query_params)?;
+                let expr = Self::add_expr_replace_params(graph, expr, query_params, sql_push_down)?;
                 graph.add(LogicalPlanLanguage::IsNullExpr([expr]))
             }
             Expr::Negative(expr) => {
-                let expr = Self::add_expr_replace_params(graph, expr, query_params)?;
+                let expr = Self::add_expr_replace_params(graph, expr, query_params, sql_push_down)?;
                 graph.add(LogicalPlanLanguage::NegativeExpr([expr]))
             }
             Expr::Between {
@@ -322,10 +369,10 @@ impl LogicalPlanToLanguageConverter {
                 low,
                 high,
             } => {
-                let expr = Self::add_expr_replace_params(graph, expr, query_params)?;
+                let expr = Self::add_expr_replace_params(graph, expr, query_params, sql_push_down)?;
                 let negated = add_expr_data_node!(graph, negated, BetweenExprNegated);
-                let low = Self::add_expr_replace_params(graph, low, query_params)?;
-                let high = Self::add_expr_replace_params(graph, high, query_params)?;
+                let low = Self::add_expr_replace_params(graph, low, query_params, sql_push_down)?;
+                let high = Self::add_expr_replace_params(graph, high, query_params, sql_push_down)?;
                 graph.add(LogicalPlanLanguage::BetweenExpr([expr, negated, low, high]))
             }
             Expr::Case {
@@ -333,16 +380,27 @@ impl LogicalPlanToLanguageConverter {
                 when_then_expr,
                 else_expr,
             } => {
-                let expr = add_expr_list_node!(graph, expr, query_params, CaseExprExpr);
+                let expr =
+                    add_expr_list_node!(graph, expr, query_params, CaseExprExpr, sql_push_down);
                 let when_then_expr = when_then_expr
                     .iter()
                     .map(|(when, then)| vec![when, then])
                     .flatten()
                     .collect::<Vec<_>>();
-                let when_then_expr =
-                    add_expr_list_node!(graph, when_then_expr, query_params, CaseExprWhenThenExpr);
-                let else_expr =
-                    add_expr_list_node!(graph, else_expr, query_params, CaseExprElseExpr);
+                let when_then_expr = add_expr_list_node!(
+                    graph,
+                    when_then_expr,
+                    query_params,
+                    CaseExprWhenThenExpr,
+                    sql_push_down
+                );
+                let else_expr = add_expr_list_node!(
+                    graph,
+                    else_expr,
+                    query_params,
+                    CaseExprElseExpr,
+                    sql_push_down
+                );
                 graph.add(LogicalPlanLanguage::CaseExpr([
                     expr,
                     when_then_expr,
@@ -350,12 +408,12 @@ impl LogicalPlanToLanguageConverter {
                 ]))
             }
             Expr::Cast { expr, data_type } => {
-                let expr = Self::add_expr_replace_params(graph, expr, query_params)?;
+                let expr = Self::add_expr_replace_params(graph, expr, query_params, sql_push_down)?;
                 let data_type = add_expr_data_node!(graph, data_type, CastExprDataType);
                 graph.add(LogicalPlanLanguage::CastExpr([expr, data_type]))
             }
             Expr::TryCast { expr, data_type } => {
-                let expr = Self::add_expr_replace_params(graph, expr, query_params)?;
+                let expr = Self::add_expr_replace_params(graph, expr, query_params, sql_push_down)?;
                 let data_type = add_expr_data_node!(graph, data_type, TryCastExprDataType);
                 graph.add(LogicalPlanLanguage::TryCastExpr([expr, data_type]))
             }
@@ -364,20 +422,32 @@ impl LogicalPlanToLanguageConverter {
                 asc,
                 nulls_first,
             } => {
-                let expr = Self::add_expr_replace_params(graph, expr, query_params)?;
+                let expr = Self::add_expr_replace_params(graph, expr, query_params, sql_push_down)?;
                 let asc = add_expr_data_node!(graph, asc, SortExprAsc);
                 let nulls_first = add_expr_data_node!(graph, nulls_first, SortExprNullsFirst);
                 graph.add(LogicalPlanLanguage::SortExpr([expr, asc, nulls_first]))
             }
             Expr::ScalarFunction { fun, args } => {
                 let fun = add_expr_data_node!(graph, fun, ScalarFunctionExprFun);
-                let args = add_expr_list_node!(graph, args, query_params, ScalarFunctionExprArgs);
+                let args = add_expr_flat_list_node!(
+                    graph,
+                    args,
+                    query_params,
+                    ScalarFunctionExprArgs,
+                    sql_push_down
+                );
 
                 graph.add(LogicalPlanLanguage::ScalarFunctionExpr([fun, args]))
             }
             Expr::ScalarUDF { fun, args } => {
                 let fun = add_expr_data_node!(graph, fun.name, ScalarUDFExprFun);
-                let args = add_expr_list_node!(graph, args, query_params, ScalarUDFExprArgs);
+                let args = add_expr_list_node!(
+                    graph,
+                    args,
+                    query_params,
+                    ScalarUDFExprArgs,
+                    sql_push_down
+                );
                 graph.add(LogicalPlanLanguage::ScalarUDFExpr([fun, args]))
             }
             Expr::AggregateFunction {
@@ -386,8 +456,13 @@ impl LogicalPlanToLanguageConverter {
                 distinct,
             } => {
                 let fun = add_expr_data_node!(graph, fun, AggregateFunctionExprFun);
-                let args =
-                    add_expr_list_node!(graph, args, query_params, AggregateFunctionExprArgs);
+                let args = add_expr_list_node!(
+                    graph,
+                    args,
+                    query_params,
+                    AggregateFunctionExprArgs,
+                    sql_push_down
+                );
                 let distinct = add_expr_data_node!(graph, distinct, AggregateFunctionExprDistinct);
                 graph.add(LogicalPlanLanguage::AggregateFunctionExpr([
                     fun, args, distinct,
@@ -401,15 +476,27 @@ impl LogicalPlanToLanguageConverter {
                 window_frame,
             } => {
                 let fun = add_expr_data_node!(graph, fun, WindowFunctionExprFun);
-                let args = add_expr_list_node!(graph, args, query_params, WindowFunctionExprArgs);
+                let args = add_expr_list_node!(
+                    graph,
+                    args,
+                    query_params,
+                    WindowFunctionExprArgs,
+                    sql_push_down
+                );
                 let partition_by = add_expr_list_node!(
                     graph,
                     partition_by,
                     query_params,
-                    WindowFunctionExprPartitionBy
+                    WindowFunctionExprPartitionBy,
+                    sql_push_down
                 );
-                let order_by =
-                    add_expr_list_node!(graph, order_by, query_params, WindowFunctionExprOrderBy);
+                let order_by = add_expr_list_node!(
+                    graph,
+                    order_by,
+                    query_params,
+                    WindowFunctionExprOrderBy,
+                    sql_push_down
+                );
                 let window_frame =
                     add_expr_data_node!(graph, window_frame, WindowFunctionExprWindowFrame);
 
@@ -423,12 +510,19 @@ impl LogicalPlanToLanguageConverter {
             }
             Expr::AggregateUDF { fun, args } => {
                 let fun = add_expr_data_node!(graph, fun.name, AggregateUDFExprFun);
-                let args = add_expr_list_node!(graph, args, query_params, AggregateUDFExprArgs);
+                let args = add_expr_list_node!(
+                    graph,
+                    args,
+                    query_params,
+                    AggregateUDFExprArgs,
+                    sql_push_down
+                );
                 graph.add(LogicalPlanLanguage::AggregateUDFExpr([fun, args]))
             }
             Expr::TableUDF { fun, args } => {
                 let fun = add_expr_data_node!(graph, fun.name, TableUDFExprFun);
-                let args = add_expr_list_node!(graph, args, query_params, TableUDFExprArgs);
+                let args =
+                    add_expr_list_node!(graph, args, query_params, TableUDFExprArgs, sql_push_down);
                 graph.add(LogicalPlanLanguage::TableUDFExpr([fun, args]))
             }
             Expr::InList {
@@ -436,8 +530,14 @@ impl LogicalPlanToLanguageConverter {
                 list,
                 negated,
             } => {
-                let expr = Self::add_expr_replace_params(graph, expr, query_params)?;
-                let list = add_expr_flat_list_node!(graph, list, query_params, InListExprList);
+                let expr = Self::add_expr_replace_params(graph, expr, query_params, sql_push_down)?;
+                let list = add_expr_flat_list_node!(
+                    graph,
+                    list,
+                    query_params,
+                    InListExprList,
+                    sql_push_down
+                );
                 let negated = add_expr_data_node!(graph, negated, InListExprNegated);
                 graph.add(LogicalPlanLanguage::InListExpr([expr, list, negated]))
             }
@@ -446,8 +546,9 @@ impl LogicalPlanToLanguageConverter {
                 subquery,
                 negated,
             } => {
-                let expr = Self::add_expr_replace_params(graph, expr, query_params)?;
-                let subquery = Self::add_expr_replace_params(graph, subquery, query_params)?;
+                let expr = Self::add_expr_replace_params(graph, expr, query_params, sql_push_down)?;
+                let subquery =
+                    Self::add_expr_replace_params(graph, subquery, query_params, sql_push_down)?;
                 let negated = add_expr_data_node!(graph, negated, InSubqueryExprNegated);
 
                 graph.add(LogicalPlanLanguage::InSubqueryExpr([
@@ -456,8 +557,8 @@ impl LogicalPlanToLanguageConverter {
             }
             Expr::Wildcard => graph.add(LogicalPlanLanguage::WildcardExpr([])),
             Expr::GetIndexedField { expr, key } => {
-                let expr = Self::add_expr_replace_params(graph, expr, query_params)?;
-                let key = Self::add_expr_replace_params(graph, key, query_params)?;
+                let expr = Self::add_expr_replace_params(graph, expr, query_params, sql_push_down)?;
+                let key = Self::add_expr_replace_params(graph, key, query_params, sql_push_down)?;
                 graph.add(LogicalPlanLanguage::GetIndexedFieldExpr([expr, key]))
             }
             // TODO: Support all
@@ -485,7 +586,8 @@ impl LogicalPlanToLanguageConverter {
                     &mut self.graph,
                     node.expr,
                     query_params,
-                    ProjectionExpr
+                    ProjectionExpr,
+                    self.sql_push_down
                 );
                 let input =
                     self.add_logical_plan_replace_params(node.input.as_ref(), query_params, ctx)?;
@@ -495,8 +597,12 @@ impl LogicalPlanToLanguageConverter {
                     .add(LogicalPlanLanguage::Projection([expr, input, alias, split]))
             }
             LogicalPlan::Filter(node) => {
-                let predicate =
-                    Self::add_expr_replace_params(&mut self.graph, &node.predicate, query_params)?;
+                let predicate = Self::add_expr_replace_params(
+                    &mut self.graph,
+                    &node.predicate,
+                    query_params,
+                    self.sql_push_down,
+                )?;
                 let input =
                     self.add_logical_plan_replace_params(node.input.as_ref(), query_params, ctx)?;
                 self.graph
@@ -505,11 +611,12 @@ impl LogicalPlanToLanguageConverter {
             LogicalPlan::Window(node) => {
                 let input =
                     self.add_logical_plan_replace_params(node.input.as_ref(), query_params, ctx)?;
-                let window_expr = add_expr_list_node!(
+                let window_expr = add_expr_flat_list_node!(
                     &mut self.graph,
                     node.window_expr,
                     query_params,
-                    WindowWindowExpr
+                    WindowWindowExpr,
+                    self.sql_push_down
                 );
                 self.graph
                     .add(LogicalPlanLanguage::Window([input, window_expr]))
@@ -521,13 +628,15 @@ impl LogicalPlanToLanguageConverter {
                     &mut self.graph,
                     node.group_expr,
                     query_params,
-                    AggregateGroupExpr
+                    AggregateGroupExpr,
+                    self.sql_push_down
                 );
                 let aggr_expr = add_binary_expr_list_node!(
                     &mut self.graph,
                     node.aggr_expr,
                     query_params,
-                    AggregateAggrExpr
+                    AggregateAggrExpr,
+                    self.sql_push_down
                 );
                 let split = add_data_node!(self, false, AggregateSplit);
                 self.graph.add(LogicalPlanLanguage::Aggregate([
@@ -535,7 +644,13 @@ impl LogicalPlanToLanguageConverter {
                 ]))
             }
             LogicalPlan::Sort(node) => {
-                let expr = add_expr_list_node!(&mut self.graph, node.expr, query_params, SortExp);
+                let expr = add_expr_list_node!(
+                    &mut self.graph,
+                    node.expr,
+                    query_params,
+                    SortExp,
+                    self.sql_push_down
+                );
                 let input =
                     self.add_logical_plan_replace_params(node.input.as_ref(), query_params, ctx)?;
                 self.graph.add(LogicalPlanLanguage::Sort([expr, input]))
@@ -608,8 +723,13 @@ impl LogicalPlanToLanguageConverter {
                     .add(LogicalPlanLanguage::Subquery([input, subqueries, types]))
             }
             LogicalPlan::TableUDFs(node) => {
-                let expr =
-                    add_expr_list_node!(&mut self.graph, node.expr, query_params, TableUDFsExpr);
+                let expr = add_expr_list_node!(
+                    &mut self.graph,
+                    node.expr,
+                    query_params,
+                    TableUDFsExpr,
+                    self.sql_push_down
+                );
                 let input =
                     self.add_logical_plan_replace_params(node.input.as_ref(), query_params, ctx)?;
                 self.graph
@@ -629,7 +749,8 @@ impl LogicalPlanToLanguageConverter {
                     &mut self.graph,
                     node.filters,
                     query_params,
-                    TableScanFilters
+                    TableScanFilters,
+                    self.sql_push_down
                 );
                 let fetch = add_data_node!(self, node.fetch, TableScanFetch);
                 self.graph.add(LogicalPlanLanguage::TableScan([

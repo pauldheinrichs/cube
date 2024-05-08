@@ -1,12 +1,12 @@
 use crate::{
     compile::rewrite::{
-        aggr_aggr_expr_empty_tail, aggr_group_expr_empty_tail, aggregate,
+        aggregate, aggregate_aggr_expr_empty, aggregate_group_expr_empty,
         aggregate_split_pullup_replacer, aggregate_split_pushdown_replacer,
-        analysis::LogicalPlanAnalysis, cube_scan, projection, projection_expr,
-        projection_expr_empty_tail, projection_split_pullup_replacer,
+        analysis::LogicalPlanAnalysis, cube_scan, projection, projection_expr_empty,
+        projection_expr_legacy, projection_split_pullup_replacer,
         projection_split_pushdown_replacer, rewrite, rules::split::SplitRules,
         transforming_rewrite, AggregateSplitPushDownReplacerAliasToCube, CubeScanAliasToCube,
-        LogicalPlanLanguage, ProjectionAlias, ProjectionSplitPushDownReplacerAliasToCube,
+        ListType, LogicalPlanLanguage, ProjectionAlias, ProjectionSplitPushDownReplacerAliasToCube,
     },
     var, var_iter,
 };
@@ -51,12 +51,12 @@ impl SplitRules {
                 ),
                 projection_split_pushdown_replacer(
                     "?group_expr",
-                    aggr_group_expr_empty_tail(),
+                    aggregate_group_expr_empty(),
                     "?split_alias_to_cube",
                 ),
                 projection_split_pushdown_replacer(
                     "?aggr_expr",
-                    aggr_aggr_expr_empty_tail(),
+                    aggregate_aggr_expr_empty(),
                     "?split_alias_to_cube",
                 ),
                 "AggregateSplit:true",
@@ -70,37 +70,9 @@ impl SplitRules {
             ),
         ));
 
-        rules.push(transforming_rewrite(
-            "split-projection-aggregate-pull-up",
-            aggregate(
-                cube_scan(
-                    "?alias_to_cube",
-                    "?members",
-                    "?filters",
-                    "?orders",
-                    "?limit",
-                    "?offset",
-                    "CubeScanSplit:true",
-                    "?can_pushdown_join",
-                    "CubeScanWrapped:false",
-                    "?ungrouped",
-                ),
-                projection_split_pullup_replacer(
-                    "?inner_group_expr",
-                    "?outer_group_expr",
-                    aggr_group_expr_empty_tail(),
-                    "?split_alias_to_cube",
-                ),
-                projection_split_pullup_replacer(
-                    "?inner_aggr_expr",
-                    "?outer_aggr_expr",
-                    aggr_aggr_expr_empty_tail(),
-                    "?split_alias_to_cube",
-                ),
-                "AggregateSplit:true",
-            ),
-            projection(
-                projection_expr("?outer_group_expr", "?outer_aggr_expr"),
+        if self.sql_push_down {
+            rules.push(transforming_rewrite(
+                "split-projection-aggregate-pull-up",
                 aggregate(
                     cube_scan(
                         "?alias_to_cube",
@@ -114,15 +86,104 @@ impl SplitRules {
                         "CubeScanWrapped:false",
                         "?ungrouped",
                     ),
-                    "?inner_group_expr",
-                    "?inner_aggr_expr",
+                    projection_split_pullup_replacer(
+                        "?inner_group_expr",
+                        "?outer_group_expr",
+                        aggregate_group_expr_empty(),
+                        "?split_alias_to_cube",
+                    ),
+                    projection_split_pullup_replacer(
+                        "?inner_aggr_expr",
+                        "?outer_aggr_expr",
+                        aggregate_aggr_expr_empty(),
+                        "?split_alias_to_cube",
+                    ),
                     "AggregateSplit:true",
                 ),
-                "?projection_alias",
-                "ProjectionSplit:true",
-            ),
-            self.transform_projection_aggregate_pull_up("?projection_alias"),
-        ));
+                projection(
+                    "?projection_expr",
+                    aggregate(
+                        cube_scan(
+                            "?alias_to_cube",
+                            "?members",
+                            "?filters",
+                            "?orders",
+                            "?limit",
+                            "?offset",
+                            "CubeScanSplit:true",
+                            "?can_pushdown_join",
+                            "CubeScanWrapped:false",
+                            "?ungrouped",
+                        ),
+                        "?inner_group_expr",
+                        "?inner_aggr_expr",
+                        "AggregateSplit:true",
+                    ),
+                    "?projection_alias",
+                    "ProjectionSplit:true",
+                ),
+                self.transform_projection_aggregate_pull_up(
+                    "?projection_alias",
+                    "?outer_group_expr",
+                    "?outer_aggr_expr",
+                    "?projection_expr",
+                ),
+            ));
+        } else {
+            rules.push(transforming_rewrite(
+                "split-projection-aggregate-pull-up",
+                aggregate(
+                    cube_scan(
+                        "?alias_to_cube",
+                        "?members",
+                        "?filters",
+                        "?orders",
+                        "?limit",
+                        "?offset",
+                        "CubeScanSplit:true",
+                        "?can_pushdown_join",
+                        "CubeScanWrapped:false",
+                        "?ungrouped",
+                    ),
+                    projection_split_pullup_replacer(
+                        "?inner_group_expr",
+                        "?outer_group_expr",
+                        aggregate_group_expr_empty(),
+                        "?split_alias_to_cube",
+                    ),
+                    projection_split_pullup_replacer(
+                        "?inner_aggr_expr",
+                        "?outer_aggr_expr",
+                        aggregate_aggr_expr_empty(),
+                        "?split_alias_to_cube",
+                    ),
+                    "AggregateSplit:true",
+                ),
+                projection(
+                    projection_expr_legacy("?outer_group_expr", "?outer_aggr_expr"),
+                    aggregate(
+                        cube_scan(
+                            "?alias_to_cube",
+                            "?members",
+                            "?filters",
+                            "?orders",
+                            "?limit",
+                            "?offset",
+                            "CubeScanSplit:true",
+                            "?can_pushdown_join",
+                            "CubeScanWrapped:false",
+                            "?ungrouped",
+                        ),
+                        "?inner_group_expr",
+                        "?inner_aggr_expr",
+                        "AggregateSplit:true",
+                    ),
+                    "?projection_alias",
+                    "ProjectionSplit:true",
+                ),
+                self.transform_projection_projection_ungrouped_pull_up("?projection_alias"),
+            ));
+        }
 
         rules.push(transforming_rewrite(
             "split-aggregate-aggregate",
@@ -158,12 +219,12 @@ impl SplitRules {
                 ),
                 aggregate_split_pushdown_replacer(
                     "?group_expr",
-                    aggr_group_expr_empty_tail(),
+                    aggregate_group_expr_empty(),
                     "?split_alias_to_cube",
                 ),
                 aggregate_split_pushdown_replacer(
                     "?aggr_expr",
-                    aggr_aggr_expr_empty_tail(),
+                    aggregate_aggr_expr_empty(),
                     "?split_alias_to_cube",
                 ),
                 "AggregateSplit:true",
@@ -194,13 +255,13 @@ impl SplitRules {
                 aggregate_split_pullup_replacer(
                     "?inner_group_expr",
                     "?outer_group_expr",
-                    aggr_group_expr_empty_tail(),
+                    aggregate_group_expr_empty(),
                     "?split_alias_to_cube",
                 ),
                 aggregate_split_pullup_replacer(
                     "?inner_aggr_expr",
                     "?outer_aggr_expr",
-                    aggr_aggr_expr_empty_tail(),
+                    aggregate_aggr_expr_empty(),
                     "?split_alias_to_cube",
                 ),
                 "AggregateSplit:true",
@@ -263,7 +324,7 @@ impl SplitRules {
                 ),
                 aggregate_split_pushdown_replacer(
                     "?projection_expr",
-                    projection_expr_empty_tail(),
+                    projection_expr_empty(),
                     "?split_alias_to_cube",
                 ),
                 "?projection_alias",
@@ -296,7 +357,7 @@ impl SplitRules {
                 aggregate_split_pullup_replacer(
                     "?inner_expr",
                     "?outer_expr",
-                    projection_expr_empty_tail(),
+                    projection_expr_empty(),
                     "?split_alias_to_cube",
                 ),
                 "?top_alias",
@@ -324,12 +385,30 @@ impl SplitRules {
                 "?top_alias",
                 "ProjectionSplit:true",
             ),
-            self.transform_projection_aggregate_pull_up("?projection_alias"),
+            self.transform_projection_projection_ungrouped_pull_up("?projection_alias"),
         ));
 
-        Self::list_pushdown_pullup_rules("aggr-group-expr", "AggregateGroupExpr", rules);
-        Self::list_pushdown_pullup_rules("aggr-aggr-expr", "AggregateAggrExpr", rules);
-        Self::list_pushdown_pullup_rules("projection-expr", "ProjectionExpr", rules);
+        if self.sql_push_down {
+            Self::flat_list_pushdown_pullup_rules(
+                "aggr-group-expr",
+                ListType::AggregateGroupExpr,
+                rules,
+            );
+            Self::flat_list_pushdown_pullup_rules(
+                "aggr-aggr-expr",
+                ListType::AggregateAggrExpr,
+                rules,
+            );
+            Self::flat_list_pushdown_pullup_rules(
+                "projection-expr",
+                ListType::ProjectionExpr,
+                rules,
+            );
+        } else {
+            Self::list_pushdown_pullup_rules("aggr-group-expr", "AggregateGroupExpr", rules);
+            Self::list_pushdown_pullup_rules("aggr-aggr-expr", "AggregateAggrExpr", rules);
+            Self::list_pushdown_pullup_rules("projection-expr", "ProjectionExpr", rules);
+        }
     }
 
     fn transform_projection_aggregate(
@@ -440,12 +519,56 @@ impl SplitRules {
         }
     }
 
-    fn transform_projection_aggregate_pull_up(
+    fn transform_projection_projection_ungrouped_pull_up(
         &self,
         projection_alias_var: &str,
     ) -> impl Fn(&mut EGraph<LogicalPlanLanguage, LogicalPlanAnalysis>, &mut Subst) -> bool {
         let projection_alias_var = var!(projection_alias_var);
         move |egraph, subst| {
+            subst.insert(
+                projection_alias_var,
+                // Do not put alias on inner projection so table name from cube scan can be reused
+                egraph.add(LogicalPlanLanguage::ProjectionAlias(ProjectionAlias(None))),
+            );
+            return true;
+        }
+    }
+
+    fn transform_projection_aggregate_pull_up(
+        &self,
+        projection_alias_var: &str,
+        outer_group_expr_var: &str,
+        outer_aggr_expr_var: &str,
+        projection_expr_var: &str,
+    ) -> impl Fn(&mut EGraph<LogicalPlanLanguage, LogicalPlanAnalysis>, &mut Subst) -> bool {
+        let projection_alias_var = var!(projection_alias_var);
+        let outer_group_expr_var = var!(outer_group_expr_var);
+        let outer_aggr_expr_var = var!(outer_aggr_expr_var);
+        let projection_expr_var = var!(projection_expr_var);
+        move |egraph, subst| {
+            let group_expr_node = egraph[subst[outer_group_expr_var]]
+                .nodes
+                .iter()
+                .find(|n| matches!(n, LogicalPlanLanguage::ProjectionExpr(_)));
+            let Some(LogicalPlanLanguage::ProjectionExpr(group_expr_node)) = group_expr_node else {
+                return false;
+            };
+            let aggr_expr_node = egraph[subst[outer_aggr_expr_var]]
+                .nodes
+                .iter()
+                .find(|n| matches!(n, LogicalPlanLanguage::ProjectionExpr(_)));
+            let Some(LogicalPlanLanguage::ProjectionExpr(aggr_expr_node)) = aggr_expr_node else {
+                return false;
+            };
+            let projection_expr = group_expr_node
+                .iter()
+                .chain(aggr_expr_node.iter())
+                .map(|id| *id)
+                .collect::<Vec<_>>();
+            subst.insert(
+                projection_expr_var,
+                egraph.add(LogicalPlanLanguage::ProjectionExpr(projection_expr)),
+            );
             subst.insert(
                 projection_alias_var,
                 // Do not put alias on inner projection so table name from cube scan can be reused

@@ -5,12 +5,15 @@ use crate::{
         binary_expr, cast_expr, change_user_expr, column_expr, column_name_to_member_to_aliases,
         column_name_to_member_vec, cross_join, cube_scan, cube_scan_filters_empty_tail,
         cube_scan_members, cube_scan_members_empty_tail, cube_scan_order_empty_tail,
-        dimension_expr, expr_column_name, fun_expr, join, like_expr, limit,
+        dimension_expr, expr_column_name, fun_expr, fun_expr_args, join, like_expr, limit,
         list_concat_pushdown_replacer, list_concat_pushup_replacer, literal_expr, literal_member,
         measure_expr, member_pushdown_replacer, member_replacer, merged_members_replacer,
         original_expr_name, projection, referenced_columns, rewrite,
         rewriter::RewriteRules,
-        rules::{replacer_push_down_node, replacer_push_down_node_substitute_rules, utils},
+        rules::{
+            replacer_flat_push_down_node_substitute_rules, replacer_push_down_node,
+            replacer_push_down_node_substitute_rules, utils,
+        },
         segment_expr, table_scan, time_dimension_expr, transform_original_expr_to_alias,
         transforming_chain_rewrite, transforming_rewrite, transforming_rewrite_with_root,
         udaf_expr, udf_expr, virtual_field_expr, AggregateFunctionExprDistinct,
@@ -18,12 +21,12 @@ use crate::{
         CastExprDataType, ChangeUserCube, ColumnExprColumn, CubeScanAliasToCube,
         CubeScanCanPushdownJoin, CubeScanLimit, CubeScanOffset, CubeScanUngrouped, DimensionName,
         JoinLeftOn, JoinRightOn, LikeExprEscapeChar, LikeExprLikeType, LikeExprNegated, LikeType,
-        LimitFetch, LimitSkip, LiteralExprValue, LiteralMemberRelation, LiteralMemberValue,
-        LogicalPlanLanguage, MeasureName, MemberErrorAliasToCube, MemberErrorError,
-        MemberErrorPriority, MemberPushdownReplacerAliasToCube, MemberReplacerAliasToCube,
-        ProjectionAlias, SegmentName, TableScanSourceTableName, TableScanTableName,
-        TimeDimensionDateRange, TimeDimensionGranularity, TimeDimensionName, VirtualFieldCube,
-        VirtualFieldName,
+        LimitFetch, LimitSkip, ListType, LiteralExprValue, LiteralMemberRelation,
+        LiteralMemberValue, LogicalPlanLanguage, MeasureName, MemberErrorAliasToCube,
+        MemberErrorError, MemberErrorPriority, MemberPushdownReplacerAliasToCube,
+        MemberReplacerAliasToCube, ProjectionAlias, SegmentName, TableScanSourceTableName,
+        TableScanTableName, TimeDimensionDateRange, TimeDimensionGranularity, TimeDimensionName,
+        VirtualFieldCube, VirtualFieldName,
     },
     config::ConfigObj,
     transport::{MetaContext, V1CubeMetaDimensionExt, V1CubeMetaExt, V1CubeMetaMeasureExt},
@@ -533,24 +536,45 @@ impl MemberRules {
             find_matching_old_member_with_count(name, column_expr, false)
         };
 
-        rules.extend(replacer_push_down_node_substitute_rules(
-            "member-pushdown-replacer-aggregate-group",
-            "AggregateGroupExpr",
-            "CubeScanMembers",
-            member_replacer_fn.clone(),
-        ));
-        rules.extend(replacer_push_down_node_substitute_rules(
-            "member-pushdown-replacer-aggregate-aggr",
-            "AggregateAggrExpr",
-            "CubeScanMembers",
-            member_replacer_fn.clone(),
-        ));
-        rules.extend(replacer_push_down_node_substitute_rules(
-            "member-pushdown-replacer-projection",
-            "ProjectionExpr",
-            "CubeScanMembers",
-            member_replacer_fn.clone(),
-        ));
+        if self.enable_ungrouped {
+            rules.extend(replacer_flat_push_down_node_substitute_rules(
+                "member-pushdown-replacer-aggregate-group",
+                ListType::AggregateGroupExpr,
+                ListType::CubeScanMembers,
+                member_replacer_fn.clone(),
+            ));
+            rules.extend(replacer_flat_push_down_node_substitute_rules(
+                "member-pushdown-replacer-aggregate-aggr",
+                ListType::AggregateAggrExpr,
+                ListType::CubeScanMembers,
+                member_replacer_fn.clone(),
+            ));
+            rules.extend(replacer_flat_push_down_node_substitute_rules(
+                "member-pushdown-replacer-projection",
+                ListType::ProjectionExpr,
+                ListType::CubeScanMembers,
+                member_replacer_fn.clone(),
+            ));
+        } else {
+            rules.extend(replacer_push_down_node_substitute_rules(
+                "member-pushdown-replacer-aggregate-group",
+                "AggregateGroupExpr",
+                "CubeScanMembers",
+                member_replacer_fn.clone(),
+            ));
+            rules.extend(replacer_push_down_node_substitute_rules(
+                "member-pushdown-replacer-aggregate-aggr",
+                "AggregateAggrExpr",
+                "CubeScanMembers",
+                member_replacer_fn.clone(),
+            ));
+            rules.extend(replacer_push_down_node_substitute_rules(
+                "member-pushdown-replacer-projection",
+                "ProjectionExpr",
+                "CubeScanMembers",
+                member_replacer_fn.clone(),
+            ));
+        }
         rules.extend(find_matching_old_member("column", column_expr("?column")));
         rules.extend(find_matching_old_member(
             "alias",
@@ -605,7 +629,7 @@ impl MemberRules {
             "date-trunc",
             fun_expr(
                 "DateTrunc",
-                vec![literal_expr("?granularity"), column_expr("?column")],
+                fun_expr_args(vec![literal_expr("?granularity"), column_expr("?column")]),
             ),
         ));
         rules.extend(find_matching_old_member(
@@ -614,7 +638,7 @@ impl MemberRules {
             alias_expr(
                 fun_expr(
                     "DateTrunc",
-                    vec![literal_expr("?granularity"), column_expr("?column")],
+                    fun_expr_args(vec![literal_expr("?granularity"), column_expr("?column")]),
                 ),
                 "?original_alias",
             ),
@@ -661,7 +685,7 @@ impl MemberRules {
                 "?original_expr",
                 fun_expr(
                     "DateTrunc",
-                    vec![literal_expr("?granularity"), column_expr("?column")],
+                    fun_expr_args(vec![literal_expr("?granularity"), column_expr("?column")]),
                 ),
             )],
             time_dimension_expr(
@@ -694,7 +718,7 @@ impl MemberRules {
                 alias_expr(
                     fun_expr(
                         "DateTrunc",
-                        vec![literal_expr("?granularity"), column_expr("?column")],
+                        fun_expr_args(vec![literal_expr("?granularity"), column_expr("?column")]),
                     ),
                     "?original_alias",
                 ),
@@ -732,7 +756,7 @@ impl MemberRules {
                 "?original_expr",
                 fun_expr(
                     "DateTrunc",
-                    vec![literal_expr("?granularity"), column_expr("?column")],
+                    fun_expr_args(vec![literal_expr("?granularity"), column_expr("?column")]),
                 ),
             )],
             time_dimension_expr(
@@ -770,7 +794,7 @@ impl MemberRules {
                 alias_expr(
                     fun_expr(
                         "DateTrunc",
-                        vec![literal_expr("?granularity"), column_expr("?column")],
+                        fun_expr_args(vec![literal_expr("?granularity"), column_expr("?column")]),
                     ),
                     "?original_alias",
                 ),

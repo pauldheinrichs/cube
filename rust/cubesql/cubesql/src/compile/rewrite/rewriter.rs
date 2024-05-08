@@ -512,6 +512,7 @@ impl Rewriter {
             Box::new(FilterRules::new(
                 meta_context.clone(),
                 eval_stable_functions,
+                sql_push_down,
             )),
             Box::new(DateRules::new()),
             Box::new(OrderRules::new()),
@@ -528,8 +529,10 @@ impl Rewriter {
             rewrites.extend(FlattenRules::new().rewrite_rules());
         }
         if config_obj.push_down_pull_up_split() {
-            rewrites
-                .extend(SplitRules::new(meta_context.clone(), config_obj.clone()).rewrite_rules());
+            rewrites.extend(
+                SplitRules::new(meta_context.clone(), config_obj.clone(), sql_push_down)
+                    .rewrite_rules(),
+            );
         } else {
             rewrites.extend(
                 OldSplitRules::new(meta_context.clone(), config_obj.clone()).rewrite_rules(),
