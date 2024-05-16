@@ -70,7 +70,7 @@ impl SplitRules {
             ),
         ));
 
-        if self.sql_push_down {
+        if self.config_obj.sql_push_down() {
             rules.push(transforming_rewrite(
                 "split-projection-aggregate-pull-up",
                 aggregate(
@@ -388,7 +388,7 @@ impl SplitRules {
             self.transform_projection_projection_ungrouped_pull_up("?projection_alias"),
         ));
 
-        if self.sql_push_down {
+        if self.config_obj.sql_push_down() {
             Self::flat_list_pushdown_pullup_rules(
                 "aggr-group-expr",
                 ListType::AggregateGroupExpr,

@@ -112,6 +112,8 @@ pub trait ConfigObj: DIService + Debug {
 
     fn push_down_pull_up_split(&self) -> bool;
 
+    fn sql_push_down(&self) -> bool;
+
     fn stream_mode(&self) -> bool;
 
     fn non_streaming_query_max_row_limit(&self) -> i32;
@@ -131,6 +133,7 @@ pub struct ConfigObjImpl {
     pub enable_parameterized_rewrite_cache: bool,
     pub enable_rewrite_cache: bool,
     pub push_down_pull_up_split: bool,
+    pub sql_push_down: bool,
     pub stream_mode: bool,
     pub non_streaming_query_max_row_limit: i32,
 }
@@ -166,6 +169,7 @@ impl ConfigObjImpl {
             enable_rewrite_cache: env_optparse("CUBESQL_REWRITE_CACHE").unwrap_or(sql_push_down),
             push_down_pull_up_split: env_optparse("CUBESQL_PUSH_DOWN_PULL_UP_SPLIT")
                 .unwrap_or(sql_push_down),
+            sql_push_down,
             stream_mode: env_parse("CUBESQL_STREAM_MODE", false),
             non_streaming_query_max_row_limit: env_parse("CUBEJS_DB_QUERY_LIMIT", 50000),
         }
@@ -219,6 +223,10 @@ impl ConfigObj for ConfigObjImpl {
         self.push_down_pull_up_split
     }
 
+    fn sql_push_down(&self) -> bool {
+        self.sql_push_down
+    }
+
     fn stream_mode(&self) -> bool {
         self.stream_mode
     }
@@ -259,6 +267,7 @@ impl Config {
                 enable_parameterized_rewrite_cache: false,
                 enable_rewrite_cache: false,
                 push_down_pull_up_split: true,
+                sql_push_down: true,
                 stream_mode: false,
                 non_streaming_query_max_row_limit: 50000,
             }),

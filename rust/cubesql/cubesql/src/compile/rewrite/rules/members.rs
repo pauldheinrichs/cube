@@ -1751,6 +1751,7 @@ impl MemberRules {
         let terminal_member = var!(terminal_member);
         let filtered_member_pushdown_replacer_alias_to_cube_var =
             var!(filtered_member_pushdown_replacer_alias_to_cube_var);
+        let sql_push_down = self.config_obj.push_down_pull_up_split();
         move |egraph, subst| {
             for alias_to_cube in var_iter!(
                 egraph[subst[member_pushdown_replacer_alias_to_cube_var]],
@@ -1792,7 +1793,11 @@ impl MemberRules {
                         };
 
                         // TODO remove unwrap
-                        let old_member = member.1.clone().add_to_egraph(egraph).unwrap();
+                        let old_member = member
+                            .1
+                            .clone()
+                            .add_to_egraph(egraph, sql_push_down)
+                            .unwrap();
                         subst.insert(terminal_member, old_member);
 
                         let filtered_member_pushdown_replacer_alias_to_cube =

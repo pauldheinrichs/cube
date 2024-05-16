@@ -200,8 +200,7 @@ pub struct LogicalPlanToLanguageContext {
 }
 
 impl LogicalPlanToLanguageConverter {
-    pub fn new(cube_context: Arc<CubeContext>) -> Self {
-        let sql_push_down = Self::sql_push_down();
+    pub fn new(cube_context: Arc<CubeContext>, sql_push_down: bool) -> Self {
         Self {
             graph: EGraph::<LogicalPlanLanguage, LogicalPlanAnalysis>::new(
                 LogicalPlanAnalysis::new(
@@ -214,30 +213,12 @@ impl LogicalPlanToLanguageConverter {
         }
     }
 
-    fn sql_push_down() -> bool {
-        let push_down_pull_up_split = env::var("CUBESQL_PUSH_DOWN_PULL_UP_SPLIT")
-            .map(|v| match v.to_lowercase().as_str() {
-                "false" => Some(false),
-                "true" => Some(true),
-                _ => None,
-            })
-            .unwrap_or(None);
-        if let Some(push_down_pull_up_split) = push_down_pull_up_split {
-            return push_down_pull_up_split;
-        }
-        env::var("CUBESQL_SQL_PUSH_DOWN")
-            .map(|v| v.to_lowercase() == "true")
-            .unwrap_or(false)
-    }
-
     pub fn add_expr(
         graph: &mut EGraph<LogicalPlanLanguage, LogicalPlanAnalysis>,
         expr: &Expr,
+        sql_push_down: bool,
     ) -> Result<Id, CubeError> {
         // TODO: reference self?
-        let sql_push_down = env::var("CUBESQL_SQL_PUSH_DOWN")
-            .map(|v| v.to_lowercase() == "true")
-            .unwrap_or(false);
         Self::add_expr_replace_params(graph, expr, &mut None, sql_push_down)
     }
 

@@ -30,7 +30,6 @@ pub struct SplitRules {
     meta_context: Arc<MetaContext>,
     #[allow(dead_code)]
     config_obj: Arc<dyn ConfigObj>,
-    sql_push_down: bool,
 }
 
 impl RewriteRules for SplitRules {
@@ -52,15 +51,10 @@ impl RewriteRules for SplitRules {
 }
 
 impl SplitRules {
-    pub fn new(
-        meta_context: Arc<MetaContext>,
-        config_obj: Arc<dyn ConfigObj>,
-        sql_push_down: bool,
-    ) -> Self {
+    pub fn new(meta_context: Arc<MetaContext>, config_obj: Arc<dyn ConfigObj>) -> Self {
         Self {
             meta_context,
             config_obj,
-            sql_push_down,
         }
     }
 
